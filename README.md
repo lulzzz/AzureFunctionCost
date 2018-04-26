@@ -12,3 +12,7 @@ The assumption is that the functions load in that hour will keep the same trend 
 3. Client ID (service principle ID)
 4. Service Principle secret
 5. Subscription ID
+
+## What's next?
+1. Replace the fixed retail pricing with rate data using the Azure [RateCard API](https://msdn.microsoft.com/en-gb/library/azure/mt219004)
+2. Non-liner function rate 
