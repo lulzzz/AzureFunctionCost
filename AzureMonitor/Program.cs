@@ -12,6 +12,7 @@ using Microsoft.Rest.Azure.OData;
 // Those versions include the multi-dimensional metrics API, which works with the previous single-dimensional metrics API too.
 using Microsoft.Azure.Management.Monitor;
 using Microsoft.Azure.Management.Monitor.Models;
+using System.IO;
 
 namespace AzureMonitor
 {
@@ -21,6 +22,9 @@ namespace AzureMonitor
         const double mil = 1000000;
         const double gig = 1024000;
         const double freeGB = 400000;
+        const double executionsPrice = 0.2;
+        const double unitsPrice = 0.000016;
+
 
         static void Main(string[] args)
         {        
@@ -35,28 +39,74 @@ namespace AzureMonitor
             else
             {
                 readOnlyClient = AuthenticateWithReadOnlyClient(tenantId, clientId, secret, subscriptionId).Result;
-                var resourceId = args[0];                
-                
-                double execUnitsLastHour = ListMetrics(readOnlyClient, resourceId, "FunctionExecutionUnits").Result;
-                double execCountLastHour = ListMetrics(readOnlyClient, resourceId, "FunctionExecutionCount").Result;
+                var resourceId = args[0];
 
-                // calc pricing - currnetly hard coded (until usage of RateCard API will be possible) 
-                // using retail pricing https://azure.microsoft.com/en-us/pricing/details/functions/ 
-                // exec count = Total Executions
-                // exec units = Execution Time
+                CalculateFunctionAppCost(readOnlyClient, resourceId, @"C:\temp\FunctionCost.txt");                                
 
-                double execCountMonth = execCountLastHour * 24 * 30;
-                double totalExecs = (execCountMonth > mil) ? ((execCountMonth - mil) / mil) * 0.2 : 0;
-
-                double execUnitMonth = (execUnitsLastHour / gig) * 24 * 30;
-                double execTime = (execUnitMonth > freeGB) ? (execUnitMonth - freeGB) * 0.000016 : 0;
-
-                double totalCost = totalExecs + execTime;
-
-                Console.WriteLine("App Service Monthy estimated cost: " + totalCost);
                 Console.Read();
             }        
-        }       
+        }
+
+        private static void CalculateFunctionAppCost(MonitorClient readOnlyClient, string resourceId, string outputFilename)
+        {
+            double execUnitsLastHour = ListMetrics(readOnlyClient, resourceId, "FunctionExecutionUnits").Result;
+            double execCountLastHour = ListMetrics(readOnlyClient, resourceId, "FunctionExecutionCount").Result;
+
+            // calc pricing - currnetly hard coded (until usage of RateCard API will be possible) 
+            // using retail pricing https://azure.microsoft.com/en-us/pricing/details/functions/ 
+            // exec count = Total Executions
+            // exec units = Execution Time
+
+            double execCountMonth = execCountLastHour * 24 * 30;
+            double totalExecs = (execCountMonth > mil) ? ((execCountMonth - mil) / mil) * executionsPrice : 0;
+
+            execUnitsLastHour = execUnitsLastHour / gig; // convert to GB
+            double execUnitMonth = execUnitsLastHour * 24 * 30;
+            double execTime = (execUnitMonth > freeGB) ? (execUnitMonth - freeGB) * unitsPrice : 0;
+
+            double totalCost = totalExecs + execTime;
+
+            Console.WriteLine("Toal Price: " + totalCost + "\n");
+            Console.WriteLine("Metric\tHour\tMonth\tCost");
+            Console.WriteLine(string.Format("{0}\t{1}\t{2}\t{3}", "FunctionExecutionUnits", execUnitsLastHour, execUnitMonth, execTime));
+            Console.WriteLine(string.Format("{0}\t{1}\t{2}\t{3}", "FunctionExecutionCount", execCountLastHour, execCountMonth, totalExecs));
+
+            string[] lines = {
+                    "===============================================================================================",
+                    DateTime.Now.ToString(),
+                    "Toal Price: " + totalCost,
+                    "Metric\tHour\tMonth\tCost",
+                    string.Format("{0}\t{1}\t{2}\t{3}", "FunctionExecutionUnits", execUnitsLastHour, execUnitMonth, execTime),
+                    string.Format("{0}\t{1}\t{2}\t{3}", "FunctionExecutionCount", execCountLastHour, execCountMonth, totalExecs)
+                };
+            WriteToFile(outputFilename, lines);
+        }
+
+        private static void WriteToFile(string filename, string[] lines)
+        {            
+            // This text is added only once to the file.
+            if (!File.Exists(filename))
+            {
+                // Create a file to write to.
+                using (StreamWriter sw = File.CreateText(filename))
+                {
+                    foreach (string line in lines)
+                    {
+                        sw.WriteLine(line);                        
+                    }
+                }
+            }
+            else
+            {
+                using (StreamWriter sw = File.AppendText(filename))
+                {
+                    foreach (string line in lines)
+                    {
+                        sw.WriteLine(line);
+                    }
+                }
+            }          
+        }
 
         private static async Task<MonitorClient> AuthenticateWithReadOnlyClient(string tenantId, string clientId, string secret, string subscriptionId)
         {
